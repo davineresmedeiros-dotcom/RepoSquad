@@ -3,7 +3,8 @@
     <application
         android:theme="@android:style/Theme.Material.Light.NoActionBar"
         android:label="RepoSquad"
-        android:usesCleartextTraffic="false">
+        android:usesCleartextTraffic="false"
+        android:networkSecurityConfig="@xml/network_security_config">
         <activity
             android:name=".MainActivity"
             android:exported="true">
