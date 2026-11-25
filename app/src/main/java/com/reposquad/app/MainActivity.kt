@@ -26,13 +26,14 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private suspend fun apiRequest(base: String, path: String, method: String = "GET", body: JSONObject? = null): JSONObject =
+private suspend fun apiRequest(base: String, token: String, path: String, method: String = "GET", body: JSONObject? = null): JSONObject =
     withContext(Dispatchers.IO) {
         val connection = (URL(base.trimEnd('/') + path).openConnection() as HttpURLConnection).apply {
             requestMethod = method
             connectTimeout = 15000
             readTimeout = 20000
             setRequestProperty("Accept", "application/json")
+            setRequestProperty("Authorization", "Bearer $token")
             if (body != null) {
                 doOutput = true
                 setRequestProperty("Content-Type", "application/json; charset=utf-8")
@@ -56,6 +57,7 @@ private suspend fun apiRequest(base: String, path: String, method: String = "GET
 @Composable
 private fun RepoSquadScreen() {
     var apiUrl by remember { mutableStateOf("") }
+    var apiToken by remember { mutableStateOf("") }
     var repo by remember { mutableStateOf("") }
     var task by remember { mutableStateOf("") }
     var agents by remember { mutableIntStateOf(3) }
@@ -75,10 +77,10 @@ private fun RepoSquadScreen() {
             var lastLogId = 0
             while (true) {
                 try {
-                    val job = apiRequest(apiUrl, "/jobs/$id")
+                    val job = apiRequest(apiUrl, apiToken, "/jobs/$id")
                     status = job.optString("status", "unknown")
                     running = status == "queued" || status == "running"
-                    val data = apiRequest(apiUrl, "/jobs/$id/logs?after=$lastLogId&limit=100")
+                    val data = apiRequest(apiUrl, apiToken, "/jobs/$id/logs?after=$lastLogId&limit=100")
                     val rows = data.optJSONArray("logs")
                     if (rows != null) for (i in 0 until rows.length()) {
                         val row = rows.getJSONObject(i)
@@ -122,6 +124,15 @@ private fun RepoSquadScreen() {
                 }
                 item {
                     OutlinedTextField(
+                        value = apiToken,
+                        onValueChange = { apiToken = it.trim() },
+                        label = { Text("API access token") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true
+                    )
+                }
+                item {
+                    OutlinedTextField(
                         value = repo,
                         onValueChange = { repo = it },
                         label = { Text("GitHub repository (owner/repo)") },
@@ -157,7 +168,7 @@ private fun RepoSquadScreen() {
                                 busy = true
                                 try {
                                     val created = apiRequest(
-                                        apiUrl, "/jobs", "POST",
+                                        apiUrl, apiToken, "/jobs", "POST",
                                         JSONObject().put("repository", repo.trim())
                                             .put("task", task.trim()).put("agents", agents)
                                     )
@@ -172,7 +183,7 @@ private fun RepoSquadScreen() {
                                 } finally { busy = false }
                             }
                         },
-                        enabled = !busy && !running && apiUrl.startsWith("https://") &&
+                        enabled = !busy && !running && apiUrl.startsWith("https://") && apiToken.isNotBlank() &&
                             repo.matches(Regex("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")) && task.isNotBlank(),
                         modifier = Modifier.fillMaxWidth()
                     ) { Text(if (busy) "Connecting..." else "Start squad") }
@@ -182,7 +193,7 @@ private fun RepoSquadScreen() {
                                 scope.launch {
                                     busy = true
                                     try {
-                                        apiRequest(apiUrl, "/jobs/$jobId/stop", "POST", JSONObject())
+                                        apiRequest(apiUrl, apiToken, "/jobs/$jobId/stop", "POST", JSONObject())
                                         status = "stopped"
                                         running = false
                                         pollJob?.cancel()
