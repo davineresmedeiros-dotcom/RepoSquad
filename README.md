@@ -28,6 +28,13 @@ The API token is deliberately not saved by this feature.
 
 The app has a **Test connection** button that calls the protected `GET /auth/check` endpoint. It confirms both backend reachability and that the API bearer token is valid. The API token field is masked while typing and is not persisted.
 
+## Stage 8: local mode and stability fixes
+
+- The Android app permits HTTP only for `localhost`/`127.0.0.1`, and Start/Reconnect now use that same validation instead of incorrectly requiring HTTPS.
+- Log polling retries after temporary connection failures and saves its last log ID to avoid replaying old lines after reconnect.
+- Backend job creation now schedules workers on FastAPI's event loop; SQLite connections are closed reliably; branch/tree refs are URL-encoded; Gemini JSON responses tolerate a surrounding text/code fence; and agent errors are reflected in the job status rather than reported as successful completion.
+- Default model is `gemini-3.8-flash`. Google lists it with free-tier input/output access, subject to the account/model rate limits. The API key is passed as a raw key through the SDK; keys beginning `AQ` do not need a custom prefix or Bearer header.
+
 ## Backend deployment
 
 The API requires `REPOSQUAD_ACCESS_TOKEN` for job endpoints. `GET /health` remains public. Enter the same access token in the Android app; it is sent as a Bearer token. Use a long random token and keep it private.
@@ -49,7 +56,7 @@ Compose persists SQLite at `./data`. Keep the VPS running and configure backups.
 - `GITHUB_TOKEN`: GitHub token with repository Contents read/write and Pull requests read/write permissions
 - `REPOSQUAD_ACCESS_TOKEN`: private API bearer token shared with the Android app
 
-Optional settings: `GEMINI_MODEL` (default `gemini-2.5-flash`) and `REPOSQUAD_DB` (SQLite file path). Use persistent storage; ephemeral disks can lose the database on redeploy. Never commit secrets or put Gemini/GitHub keys in the APK.
+Optional settings: `GEMINI_MODEL` (default `gemini-3.8-flash`, listed with free-tier access by Google) and `REPOSQUAD_DB` (SQLite file path). The free tier has usage/rate limits and is not unlimited 24/7. Use persistent storage; ephemeral disks can lose the database on redeploy. Never commit secrets or put Gemini/GitHub keys in the APK.
 
 ## Run backend locally
 
@@ -86,7 +93,7 @@ RepoSquad can run on the same Android phone as the app. The backend binds to loo
    bash backend/termux-start.sh
    ```
 
-   Enter your Gemini API key, GitHub token, and a private RepoSquad access token when prompted. They are read silently and exported only to this running shell; do not paste them into GitHub or the app. The backend database is stored in `backend/reposquad.db`.
+   Enter your full Gemini API key exactly as issued (including an `AQ...` prefix if that is how your key begins), GitHub token, and a private RepoSquad access token when prompted. The Gemini key is passed directly to the Google Gen AI SDK as `GEMINI_API_KEY`; do not add `Bearer ` or paste it into GitHub/the Android app. Secrets are read silently and exported only to this running shell. The backend database is stored in `backend/reposquad.db`.
 
 4. In Termux, use `termux-wake-lock` in another session (or before starting the script) and keep Termux running. Keep the phone charging and set Termux battery usage to Unrestricted in Android settings. Wake Lock helps prevent sleep but Android may still stop processes; rebooting or force-stopping Termux stops the backend.
 5. In RepoSquad, set Backend URL to `http://127.0.0.1:8000`, enter the same private access token, tap **Test connection**, then start a job.
