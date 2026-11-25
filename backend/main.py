@@ -1,8 +1,8 @@
-import asyncio,base64,json,os,sqlite3,uuid
+import asyncio,base64,json,os,sqlite3,uuid,secrets
 from datetime import datetime,timezone
 from pathlib import Path
 import httpx
-from fastapi import FastAPI,HTTPException
+from fastapi import FastAPI,HTTPException,Header,Depends
 from pydantic import BaseModel,Field
 from google import genai
 from google.genai import types
@@ -32,6 +32,12 @@ class Start(BaseModel):
  agents:int=Field(ge=1,le=5)
 class Job(BaseModel):
  id:str; repository:str; task:str; agents:int; status:str; created_at:str; updated_at:str; error:str|None=None
+def verify_access(authorization: str | None = Header(default=None)):
+ token=os.getenv("REPOSQUAD_ACCESS_TOKEN")
+ if not token: raise HTTPException(503,"REPOSQUAD_ACCESS_TOKEN missing on server")
+ supplied=(authorization or "").removeprefix("Bearer ").strip()
+ if not secrets.compare_digest(supplied,token): raise HTTPException(401,"Invalid or missing API token")
+
 def headers():
  t=os.getenv("GITHUB_TOKEN")
  if not t: raise RuntimeError("GITHUB_TOKEN missing on server")
@@ -122,7 +128,7 @@ async def startup():
 @app.get("/health")
 def health(): return {"status":"ok","service":"reposquad-api","worker":"enabled"}
 @app.post("/jobs",response_model=Job)
-def start(p:Start):
+def start(p:Start,_=Depends(verify_access)):
  if not os.getenv("GEMINI_API_KEY"): raise HTTPException(503,"GEMINI_API_KEY missing on server")
  if not os.getenv("GITHUB_TOKEN"): raise HTTPException(503,"GITHUB_TOKEN missing on server")
  j=str(uuid.uuid4()); t=now()
@@ -131,7 +137,7 @@ def start(p:Start):
   r=c.execute("SELECT * FROM jobs WHERE id=?",(j,)).fetchone()
  schedule(j); return dto(r)
 @app.post("/jobs/{j}/stop",response_model=Job)
-def stop(j:str):
+def stop(j:str,_=Depends(verify_access)):
  with conn() as c:
   r=c.execute("SELECT * FROM jobs WHERE id=?",(j,)).fetchone()
   if not r: raise HTTPException(404,"Job not found")
@@ -139,12 +145,12 @@ def stop(j:str):
  if j in events: events[j].set()
  d=dto(r); d["status"]="stopped"; d["updated_at"]=now(); return d
 @app.get("/jobs/{j}",response_model=Job)
-def status(j:str):
+def status(j:str,_=Depends(verify_access)):
  with conn() as c: r=c.execute("SELECT * FROM jobs WHERE id=?",(j,)).fetchone()
  if not r: raise HTTPException(404,"Job not found")
  return dto(r)
 @app.get("/jobs/{j}/logs")
-def logs(j:str,after:int=0,limit:int=100):
+def logs(j:str,after:int=0,limit:int=100,_=Depends(verify_access)):
  with conn() as c:
   if not c.execute("SELECT 1 FROM jobs WHERE id=?",(j,)).fetchone(): raise HTTPException(404,"Job not found")
   rows=c.execute("SELECT id,agent,created_at,message FROM logs WHERE job_id=? AND id>? ORDER BY id LIMIT ?",(j,max(0,after),max(1,min(limit,400)))).fetchall()
