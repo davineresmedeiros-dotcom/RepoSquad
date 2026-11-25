@@ -24,7 +24,10 @@ if [ ! -d .venv ]; then
 fi
 . .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
+
+# PyPI does not provide a standard Android/Termux pydantic-core wheel.
+# Use the Android wheel index so pip does not try to compile it with maturin.
+python -m pip install --extra-index-url https://eutalix.github.io/android-pydantic-core/ -r requirements.txt
 
 read -r -s -p "Gemini API key: " GEMINI_API_KEY; echo
 read -r -s -p "GitHub token (repo contents + pull requests): " GITHUB_TOKEN; echo
