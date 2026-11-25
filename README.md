@@ -34,7 +34,7 @@ Each worker can take up to 80 model steps before its safety cap. Workers finish 
 Set these in the hosting provider's environment settings:
 
 - `GEMINI_API_KEY`: Gemini API key
-- `GITHUB_TOKEN`: GitHub token with access to the target repository and Contents read/write permission
+- `GITHUB_TOKEN`: GitHub token with access to the target repository, Contents read/write permission, and Pull requests read/write permission (needed to open PRs)
 
 Optional settings: `GEMINI_MODEL` (default `gemini-2.5-flash`) and `REPOSQUAD_DB` (SQLite file path). Use a host with persistent disk; ephemeral storage will lose the SQLite database on redeploy. Do not commit secrets or place them in the Android app.
 
@@ -52,7 +52,7 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 
 Endpoints: `GET /health`, `POST /jobs`, `GET /jobs/{id}`, `POST /jobs/{id}/stop`, and `GET /jobs/{id}/logs`.
 
-## Android build
+## Stage 5: automatic pull requests\n\nWhen an agent finishes, it opens a PR from its own branch into the repository's default branch. If it reaches the 80-step cap, it opens a draft PR instead. RepoSquad never merges automatically. Give the server's GitHub token Contents and Pull requests read/write permissions.\n\n## Android build
 
 Requires JDK 17 and Gradle 8.11.1:
 
