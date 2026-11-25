@@ -16,6 +16,8 @@ AI coding agents working on GitHub repositories, controlled from an Android app.
 4. When an agent finishes, it opens a pull request. If it reaches the 80-step cap, it opens a draft PR.
 5. RepoSquad does **not** merge pull requests automatically. Review and test changes before merging.
 
+Agents can also remove and rename files, create GitHub Actions workflow files, and create a new private repository when explicitly requested. In the Android repository field, enter `new:project-name` to create a fresh private repository before the job starts; the job will target that repository. Existing repositories use `owner/repo`. Agents work on branches and PRs, not directly on the default branch.
+
 The agents work on the server; the Android app is the remote control. Closing the app does not stop a backend job.
 
 ## Stage 6: reconnect after closing the app
@@ -27,6 +29,17 @@ The API token is deliberately not saved by this feature.
 ## Stage 7: connection test and token privacy
 
 The app has a **Test connection** button that calls the protected `GET /auth/check` endpoint. It confirms both backend reachability and that the API bearer token is valid. The API token field is masked while typing and is not persisted.
+
+## GitHub operations (expanded)
+
+- `write_file`: create or update a file on the agent branch.
+- `delete_file`: remove a file on the agent branch (only when needed for the task).
+- `rename_file`: move/rename a file by adding the destination and deleting the source.
+- `create_workflow`: create or update `.github/workflows/<name>.yml` on the agent branch.
+- `create_repo`: create a new private repository under the account that owns `GITHUB_TOKEN`, then continue the agent task in that repository.
+- Existing repository jobs start from `owner/repo`; to have RepoSquad create a fresh private repository before the job, enter `new:project-name` in the repository field. The repository is initialized with a README.
+
+The GitHub token must have repository Contents read/write and Pull requests read/write. To create repositories, it also needs permission to create repositories for the authenticated user. Creating or updating workflow files may require the classic token `workflow` scope (or the equivalent fine-grained permission GitHub requires). Use the minimum permissions necessary. New repositories are private by default; RepoSquad never makes them public automatically and never merges PRs.
 
 ## Stage 8: local mode and stability fixes
 
