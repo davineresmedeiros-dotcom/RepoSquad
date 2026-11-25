@@ -6,11 +6,9 @@ from urllib.parse import quote
 import httpx
 from fastapi import FastAPI,HTTPException,Header,Depends
 from pydantic import BaseModel,Field
-from google import genai
-from google.genai import types
 
 DB=Path(os.getenv("REPOSQUAD_DB",str(Path(__file__).parent/"reposquad.db")))
-MODEL=os.getenv("GEMINI_MODEL","gemini-3.8-flash")
+MODEL=os.getenv("OPENROUTER_MODEL","openrouter/free")
 API="https://api.github.com"
 app=FastAPI(title="RepoSquad API",version="0.2.0")
 events={}; tasks={}
@@ -154,26 +152,36 @@ Return exactly one JSON object, no markdown. Available actions:
 {"action":"create_repo","args":{"name":"new-repo","description":"project purpose","private":true}}
 {"action":"finish","args":{"summary":"completed task"}}
 Inspect before editing. Use relative paths. For rename, ensure destination does not exist. Delete only files clearly required by the task, never remove unrelated data. Create a new repository only when the user explicitly requested one; default it to private. After create_repo, continue work in the newly created repository. Workflows belong in .github/workflows and require the GitHub token's workflow permission. Do not claim tests ran unless actually run. Never reveal secrets. Work only on your branch. If not finished, choose next useful action."""
-async def choose(model,repo,task,b,h):
+async def choose(repo,task,b,h):
  prompt="Repository: "+repo+"\nBranch: "+b+"\nTask: "+task+"\nRecent results: "+json.dumps(h[-5:],ensure_ascii=False)+"\nChoose next action."
- r=await asyncio.to_thread(model.models.generate_content,model=MODEL,contents=prompt,config=types.GenerateContentConfig(system_instruction=RULES,temperature=0.2))
- text=(r.text or "").strip()
+ key=os.getenv("OPENROUTER_API_KEY")
+ if not key: raise RuntimeError("OPENROUTER_API_KEY missing on server")
+ async with httpx.AsyncClient(timeout=90) as client:
+  r=await client.post("https://openrouter.ai/api/v1/chat/completions",
+   headers={"Authorization":"Bearer "+key,"Content-Type":"application/json","HTTP-Referer":os.getenv("OPENROUTER_SITE_URL","https://github.com/davineresmedeiros-dotcom/RepoSquad"),"X-Title":"RepoSquad"},
+   json={"model":MODEL,"messages":[{"role":"system","content":RULES},{"role":"user","content":prompt}],"temperature":0.2,"response_format":{"type":"json_object"}})
+ if r.status_code>=400: raise RuntimeError("OpenRouter "+str(r.status_code)+": "+r.text[:500])
+ data=r.json()
+ try: text=data["choices"][0]["message"]["content"]
+ except (KeyError,IndexError,TypeError): raise RuntimeError("OpenRouter returned no message content")
+ if isinstance(text,list): text="".join(str(x.get("text","")) if isinstance(x,dict) else str(x) for x in text)
+ text=str(text or "").strip()
  try: d=json.loads(text)
  except json.JSONDecodeError:
-  start=text.find("{")
-  if start<0: raise RuntimeError("Gemini did not return a JSON action")
-  d,_=json.JSONDecoder().raw_decode(text[start:])
- if d.get("action") not in ("list_files","read_file","write_file","delete_file","rename_file","create_workflow","create_repo","finish") or not isinstance(d.get("args",{}),dict): raise RuntimeError("Invalid Gemini action")
+  begin=text.find("{")
+  if begin<0: raise RuntimeError("OpenRouter did not return a JSON action")
+  d,_=json.JSONDecoder().raw_decode(text[begin:])
+ if d.get("action") not in ("list_files","read_file","write_file","delete_file","rename_file","create_workflow","create_repo","finish") or not isinstance(d.get("args",{}),dict): raise RuntimeError("Invalid OpenRouter action")
  return d
 async def agent(j,repo,task,n,event):
  b="reposquad/"+j[:8]+"/agent-"+str(n); history=[]
  try:
   async with httpx.AsyncClient(timeout=45) as c:
    await branch(c,repo,b); log(j,n,"Started branch "+b)
-   model=genai.Client(api_key=os.environ["GEMINI_API_KEY"]); changed=False
+   changed=False
    for step in range(1,81):
     if event.is_set(): return "stopped"
-    d=await choose(model,repo,task,b,history); act,args=d["action"],d.get("args",{})
+    d=await choose(repo,task,b,history); act,args=d["action"],d.get("args",{})
     if act=="finish":
      summary=str(args.get("summary","completed task"))[:700]
      log(j,n,"Finished: "+summary)
@@ -237,7 +245,7 @@ def auth_check(_=Depends(verify_access)):
  return {"authorized":True,"service":"reposquad-api"}
 @app.post("/jobs",response_model=Job)
 async def start(p:Start,_=Depends(verify_access)):
- if not os.getenv("GEMINI_API_KEY"): raise HTTPException(503,"GEMINI_API_KEY missing on server")
+ if not os.getenv("OPENROUTER_API_KEY"): raise HTTPException(503,"OPENROUTER_API_KEY missing on server")
  if not os.getenv("GITHUB_TOKEN"): raise HTTPException(503,"GITHUB_TOKEN missing on server")
  repo=p.repository
  if repo.startswith("new:"):
