@@ -10,6 +10,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -131,7 +132,8 @@ private fun RepoSquadScreen() {
                         onValueChange = { apiToken = it.trim() },
                         label = { Text("API access token") },
                         modifier = Modifier.fillMaxWidth(),
-                        singleLine = true
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation()
                     )
                 }
                 item {
@@ -163,6 +165,30 @@ private fun RepoSquadScreen() {
                         modifier = Modifier.fillMaxWidth(),
                         minLines = 4
                     )
+                }
+                item {
+                    OutlinedButton(
+                        onClick = {
+                            scope.launch {
+                                busy = true
+                                try {
+                                    val result = apiRequest(apiUrl, apiToken, "/auth/check")
+                                    if (result.optBoolean("authorized")) {
+                                        status = "Conectado: token válido"
+                                        prefs.edit().putString("apiUrl", apiUrl.trim()).apply()
+                                        append("Conexão e token verificados.")
+                                    } else {
+                                        status = "Token não autorizado"
+                                    }
+                                } catch (e: Exception) {
+                                    status = "Teste falhou: ${e.message ?: "erro desconhecido"}"
+                                    append(status)
+                                } finally { busy = false }
+                            }
+                        },
+                        enabled = !busy && apiUrl.startsWith("https://") && apiToken.isNotBlank(),
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text(if (busy) "Testing..." else "Test connection") }
                 }
                 item {
                     Button(
