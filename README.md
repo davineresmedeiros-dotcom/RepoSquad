@@ -8,6 +8,21 @@ AI coding agents working on GitHub repositories.
 - `backend/`: FastAPI service and Gemini coding workers
 - `.github/workflows/android-build.yml`: builds the debug APK
 
+## Backend deployment (Stage 4)
+
+The API requires `REPOSQUAD_ACCESS_TOKEN` for all job endpoints. `/health` remains public for health checks. Enter the same token in the Android app; it is sent as a Bearer token over HTTPS. Use a long random token and keep it private.
+
+### Docker on a persistent VPS
+
+1. Install Docker Engine and the Docker Compose plugin on your VPS.
+2. Clone this repository and enter its directory.
+3. Copy `backend/.env.example` to `backend/.env`; fill in `GEMINI_API_KEY`, `GITHUB_TOKEN`, and `REPOSQUAD_ACCESS_TOKEN` with secrets. Set `REPOSQUAD_DB=/data/reposquad.db`.
+4. Run `docker compose up -d --build`.
+5. Put a reverse proxy with TLS (for example Caddy) in front of port 8000; expose only HTTPS publicly. Do not expose the backend port directly to the internet.
+6. Set the app's Backend URL to the HTTPS URL and its API access token to the exact same token.
+
+Compose persists SQLite at `./data`. Keep the VPS running and configure backups. This Docker setup does not provide a free host or domain/TLS automatically; a persistent server is required for continuous work.
+
 ## Backend worker (Stage 2)
 
 The API now persists jobs and logs in SQLite, resumes jobs marked running after a process restart, runs 1–5 Gemini workers, creates a separate branch per worker, and supports repository file listing, reading, writing/committing, status, logs, and stop requests.
