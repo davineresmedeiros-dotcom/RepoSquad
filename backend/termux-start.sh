@@ -58,12 +58,14 @@ python -m pip install --no-deps "./$WHEEL_FILE"
 rm -f "$WHEEL_FILE"
 python -c 'import pydantic_core; print("pydantic-core:", pydantic_core.__version__)'
 
-python -m pip install -r requirements.txt
+printf 'pydantic==2.14.0\\n' > termux-constraints.txt
+python -m pip install -c termux-constraints.txt -r requirements.txt
 
-read -r -s -p "Gemini API key: " GEMINI_API_KEY; echo
+read -r -s -p "OpenRouter API key: " OPENROUTER_API_KEY; echo
 read -r -s -p "GitHub token (repo contents + pull requests): " GITHUB_TOKEN; echo
 read -r -s -p "RepoSquad access token (make a private random token): " REPOSQUAD_ACCESS_TOKEN; echo
-export GEMINI_API_KEY GITHUB_TOKEN REPOSQUAD_ACCESS_TOKEN
+export OPENROUTER_API_KEY GITHUB_TOKEN REPOSQUAD_ACCESS_TOKEN
+export OPENROUTER_MODEL="${OPENROUTER_MODEL:-openrouter/free}"
 export REPOSQUAD_DB="$PWD/reposquad.db"
 
 printf '\\nRepoSquad local backend starting at http://127.0.0.1:8000\\n'
