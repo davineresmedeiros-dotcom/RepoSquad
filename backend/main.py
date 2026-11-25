@@ -52,6 +52,25 @@ async def branch(c,repo,b):
  try: await gh(c,"POST","/repos/"+repo+"/git/refs",json={"ref":"refs/heads/"+b,"sha":ref["object"]["sha"]})
  except RuntimeError as e:
   if "422" not in str(e): raise
+async def open_pr(c,repo,b,job_id,agent,summary,draft=False):
+ info=await gh(c,"GET","/repos/"+repo)
+ base=info["default_branch"]
+ title=("RepoSquad agent "+str(agent)+": "+str(summary or "completed task"))[:240]
+ body=("Automated contribution from RepoSquad.\n\n"
+       +"Job: "+job_id+"\nAgent: "+str(agent)+"\nBranch: "+b+"\n\n"
+       +"Please review the changes and run the project's tests before merging. "
+       +"RepoSquad does not merge automatically.")
+ try:
+  d=await gh(c,"POST","/repos/"+repo+"/pulls",json={"title":title,"head":b,"base":base,"body":body,"draft":draft})
+ except RuntimeError as e:
+  if "422" in str(e) and "pull request" in str(e).lower():
+   log(job_id,agent,"PR may already exist for branch "+b)
+   return None
+  raise
+ url=d.get("html_url","")
+ log(job_id,agent,("Draft PR created: " if draft else "PR created: ")+url)
+ return url
+
 async def action(c,repo,b,act,args):
  if act=="list_files":
   d=await gh(c,"GET","/repos/"+repo+"/git/trees/"+b,params={"recursive":"1"})
@@ -96,10 +115,15 @@ async def agent(j,repo,task,n,event):
    for step in range(1,81):
     if event.is_set(): return
     d=await choose(model,repo,task,b,history); act,args=d["action"],d.get("args",{})
-    if act=="finish": log(j,n,"Finished: "+str(args.get("summary","done"))[:700]); return
+    if act=="finish":
+     summary=str(args.get("summary","completed task"))[:700]
+     log(j,n,"Finished: "+summary)
+     await open_pr(c,repo,b,j,n,summary,draft=False)
+     return
     result=await action(c,repo,b,act,args); brief=json.dumps(result,ensure_ascii=False)[:3500]
     history.append({"action":act,"result":brief}); log(j,n,"Step "+str(step)+" "+act+": "+brief)
-   log(j,n,"Safety cap reached: 80 model steps.")
+   log(j,n,"Safety cap reached: 80 model steps; opening a draft PR for review.")
+   await open_pr(c,repo,b,j,n,"work in progress (step cap reached)",draft=True)
  except Exception as e: log(j,n,"ERROR: "+str(e)[:900])
 async def worker(j):
  event=events.setdefault(j,asyncio.Event())
