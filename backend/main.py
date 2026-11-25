@@ -103,14 +103,57 @@ async def action(c,repo,b,act,args):
   if old: body["sha"]=old["sha"]
   d=await gh(c,"PUT",ep,json=body)
   return {"path":p,"commit":d.get("commit",{}).get("sha","")}
+ if act=="delete_file":
+  old=await gh(c,"GET",ep,params={"ref":b})
+  d=await gh(c,"DELETE",ep,json={"message":str(args.get("message","RepoSquad remove file"))[:120],"sha":old["sha"],"branch":b})
+  return {"path":p,"deleted":True,"commit":d.get("commit",{}).get("sha","")}
+ if act=="rename_file":
+  newp=str(args.get("new_path","")).strip()
+  if not newp or newp.startswith("/") or "\\" in newp or "\x00" in newp or ".." in Path(newp).parts: raise RuntimeError("Invalid destination path")
+  old=await gh(c,"GET",ep,params={"ref":b})
+  content=base64.b64decode(old.get("content","").replace("\n","")).decode("utf-8",errors="replace")
+  dest="/repos/"+repo+"/contents/"+newp
+  try:
+   await gh(c,"GET",dest,params={"ref":b})
+   raise RuntimeError("Destination already exists: "+newp)
+  except RuntimeError as e:
+   if "404" not in str(e): raise
+  put=await gh(c,"PUT",dest,json={"message":str(args.get("message","RepoSquad rename file"))[:120],"content":base64.b64encode(content.encode()).decode(),"branch":b})
+  delete=await gh(c,"DELETE",ep,json={"message":str(args.get("message","RepoSquad rename file"))[:120],"sha":old["sha"],"branch":b})
+  return {"old_path":p,"new_path":newp,"commit":delete.get("commit",{}).get("sha") or put.get("commit",{}).get("sha","")}
+ if act=="create_repo":
+  name=str(args.get("name","")).strip()
+  if not name or not __import__("re").fullmatch(r"[A-Za-z0-9_.-]{1,100}",name): raise RuntimeError("Invalid repository name")
+  body={"name":name,"description":str(args.get("description","Created by RepoSquad"))[:350],"private":bool(args.get("private",True)),"auto_init":True}
+  d=await gh(c,"POST","/user/repos",json=body)
+  return {"created_repository":d.get("full_name"),"url":d.get("html_url"),"default_branch":d.get("default_branch")}
+ if act=="create_workflow":
+  name=str(args.get("name","reposquad.yml")).strip()
+  if not name.endswith((".yml",".yaml")) or "/" in name or "\\" in name: raise RuntimeError("Workflow name must be a .yml or .yaml filename")
+  content=args.get("content")
+  if not isinstance(content,str) or len(content)>80000: raise RuntimeError("Workflow content too large")
+  wp=".github/workflows/"+name
+  wep="/repos/"+repo+"/contents/"+wp
+  old=None
+  try: old=await gh(c,"GET",wep,params={"ref":b})
+  except RuntimeError as e:
+   if "404" not in str(e): raise
+  body={"message":str(args.get("message","RepoSquad add workflow"))[:120],"content":base64.b64encode(content.encode()).decode(),"branch":b}
+  if old: body["sha"]=old["sha"]
+  d=await gh(c,"PUT",wep,json=body)
+  return {"workflow":wp,"commit":d.get("commit",{}).get("sha","")}
  raise RuntimeError("Unknown action")
-RULES="""You are a coding agent on the user's GitHub repository. Make concrete progress.
-Return exactly one JSON object, no markdown:
+RULES="""You are an autonomous coding agent working on the user's GitHub project. Make concrete progress.
+Return exactly one JSON object, no markdown. Available actions:
 {"action":"list_files","args":{}}
 {"action":"read_file","args":{"path":"relative/file"}}
 {"action":"write_file","args":{"path":"relative/file","content":"complete file text","message":"commit message"}}
-{"action":"finish","args":{"summary":"completed work"}}
-Inspect before editing. Use relative paths. Do not claim tests ran unless actually run. Never reveal secrets. Work only on your branch. If not finished, choose next useful action."""
+{"action":"delete_file","args":{"path":"relative/file","message":"why remove it"}}
+{"action":"rename_file","args":{"path":"old/path","new_path":"new/path","message":"why rename it"}}
+{"action":"create_workflow","args":{"name":"ci.yml","content":"complete GitHub Actions YAML","message":"add CI workflow"}}
+{"action":"create_repo","args":{"name":"new-repo","description":"project purpose","private":true}}
+{"action":"finish","args":{"summary":"completed task"}}
+Inspect before editing. Use relative paths. For rename, ensure destination does not exist. Delete only files clearly required by the task, never remove unrelated data. Create a new repository only when the user explicitly requested one; default it to private. After create_repo, continue work in the newly created repository. Workflows belong in .github/workflows and require the GitHub token's workflow permission. Do not claim tests ran unless actually run. Never reveal secrets. Work only on your branch. If not finished, choose next useful action."""
 async def choose(model,repo,task,b,h):
  prompt="Repository: "+repo+"\nBranch: "+b+"\nTask: "+task+"\nRecent results: "+json.dumps(h[-5:],ensure_ascii=False)+"\nChoose next action."
  r=await asyncio.to_thread(model.models.generate_content,model=MODEL,contents=prompt,config=types.GenerateContentConfig(system_instruction=RULES,temperature=0.2))
@@ -120,23 +163,36 @@ async def choose(model,repo,task,b,h):
   start=text.find("{")
   if start<0: raise RuntimeError("Gemini did not return a JSON action")
   d,_=json.JSONDecoder().raw_decode(text[start:])
- if d.get("action") not in ("list_files","read_file","write_file","finish") or not isinstance(d.get("args",{}),dict): raise RuntimeError("Invalid Gemini action")
+ if d.get("action") not in ("list_files","read_file","write_file","delete_file","rename_file","create_workflow","create_repo","finish") or not isinstance(d.get("args",{}),dict): raise RuntimeError("Invalid Gemini action")
  return d
 async def agent(j,repo,task,n,event):
  b="reposquad/"+j[:8]+"/agent-"+str(n); history=[]
  try:
   async with httpx.AsyncClient(timeout=45) as c:
    await branch(c,repo,b); log(j,n,"Started branch "+b)
-   model=genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+   model=genai.Client(api_key=os.environ["GEMINI_API_KEY"]); changed=False
    for step in range(1,81):
     if event.is_set(): return "stopped"
     d=await choose(model,repo,task,b,history); act,args=d["action"],d.get("args",{})
     if act=="finish":
      summary=str(args.get("summary","completed task"))[:700]
      log(j,n,"Finished: "+summary)
-     await open_pr(c,repo,b,j,n,summary,draft=False)
+     if changed:
+      await open_pr(c,repo,b,j,n,summary,draft=False)
+     else:
+      log(j,n,"No file changes; skipped empty PR.")
      return "completed"
-    result=await action(c,repo,b,act,args); brief=json.dumps(result,ensure_ascii=False)[:3500]
+    result=await action(c,repo,b,act,args)
+    if act=="create_repo":
+     new_repo=result.get("created_repository")
+     if not new_repo: raise RuntimeError("GitHub did not return the created repository name")
+     repo=new_repo
+     b="reposquad/"+j[:8]+"/agent-"+str(n)
+     await branch(c,repo,b)
+     log(j,n,"Created repository "+repo+" and switched work branch to "+b)
+    elif act in ("write_file","delete_file","rename_file","create_workflow"):
+     changed=True
+    brief=json.dumps(result,ensure_ascii=False)[:3500]
     history.append({"action":act,"result":brief}); log(j,n,"Step "+str(step)+" "+act+": "+brief)
    log(j,n,"Safety cap reached: 80 model steps; opening a draft PR for review.")
    await open_pr(c,repo,b,j,n,"work in progress (step cap reached)",draft=True)
