@@ -1,44 +1,53 @@
 # RepoSquad
 
-AI coding agents working on GitHub repositories.
+AI coding agents working on GitHub repositories, controlled from an Android app.
 
 ## Project layout
 
-- `app/`: native Android Compose control panel (currently UI prototype)
-- `backend/`: FastAPI service and Gemini coding workers
-- `.github/workflows/android-build.yml`: builds the debug APK
+- `app/`: Android Compose control panel
+- `backend/`: FastAPI service and Gemini coding agents
+- `.github/workflows/android-build.yml`: backend syntax check and Android debug APK build
 
-## Backend deployment (Stage 4)
+## What it does
 
-The API requires `REPOSQUAD_ACCESS_TOKEN` for all job endpoints. `/health` remains public for health checks. Enter the same token in the Android app; it is sent as a Bearer token over HTTPS. Use a long random token and keep it private.
+1. The Android app sends a coding task to the hosted backend.
+2. The backend starts 1–5 Gemini agents, each on a separate branch.
+3. Agents inspect, create, and edit repository files and commit their changes.
+4. When an agent finishes, it opens a pull request. If it reaches the 80-step cap, it opens a draft PR.
+5. RepoSquad does **not** merge pull requests automatically. Review and test changes before merging.
+
+The agents work on the server; the Android app is the remote control. Closing the app does not stop a backend job.
+
+## Stage 6: reconnect after closing the app
+
+The Android app now remembers the backend URL, repository, task, agent count, and last job ID on the device. After reopening the app, enter the API access token again and tap **Reconnect to last job** to check the saved job and resume log polling if it is still running.
+
+The API token is deliberately not saved by this feature.
+
+## Backend deployment
+
+The API requires `REPOSQUAD_ACCESS_TOKEN` for job endpoints. `GET /health` remains public. Enter the same access token in the Android app; it is sent as a Bearer token. Use a long random token and keep it private.
 
 ### Docker on a persistent VPS
 
-1. Install Docker Engine and the Docker Compose plugin on your VPS.
+1. Install Docker Engine and the Docker Compose plugin.
 2. Clone this repository and enter its directory.
-3. Copy `backend/.env.example` to `backend/.env`; fill in `GEMINI_API_KEY`, `GITHUB_TOKEN`, and `REPOSQUAD_ACCESS_TOKEN` with secrets. Set `REPOSQUAD_DB=/data/reposquad.db`.
+3. Copy `backend/.env.example` to `backend/.env`; set `GEMINI_API_KEY`, `GITHUB_TOKEN`, and `REPOSQUAD_ACCESS_TOKEN`. Set `REPOSQUAD_DB=/data/reposquad.db`.
 4. Run `docker compose up -d --build`.
-5. Put a reverse proxy with TLS (for example Caddy) in front of port 8000; expose only HTTPS publicly. Do not expose the backend port directly to the internet.
-6. Set the app's Backend URL to the HTTPS URL and its API access token to the exact same token.
+5. Put a reverse proxy with TLS (for example Caddy) in front of port 8000. Expose only HTTPS publicly; do not expose the backend port directly.
+6. Set the app's Backend URL to the HTTPS URL and enter the same API access token.
 
-Compose persists SQLite at `./data`. Keep the VPS running and configure backups. This Docker setup does not provide a free host or domain/TLS automatically; a persistent server is required for continuous work.
+Compose persists SQLite at `./data`. Keep the VPS running and configure backups. Docker does not provide free hosting or a domain/TLS automatically; continuous work requires a persistent server.
 
-## Backend worker (Stage 2)
-
-The API now persists jobs and logs in SQLite, resumes jobs marked running after a process restart, runs 1–5 Gemini workers, creates a separate branch per worker, and supports repository file listing, reading, writing/committing, status, logs, and stop requests.
-
-Each worker can take up to 80 model steps before its safety cap. Workers finish when Gemini reports the task complete; they are not an endless polling loop. Each agent branch is separate and is not automatically merged or turned into a pull request yet. The Android UI is not connected to this API in this stage.
-
-### Required server secrets
-
-Set these in the hosting provider's environment settings:
+## Required server secrets
 
 - `GEMINI_API_KEY`: Gemini API key
-- `GITHUB_TOKEN`: GitHub token with access to the target repository, Contents read/write permission, and Pull requests read/write permission (needed to open PRs)
+- `GITHUB_TOKEN`: GitHub token with repository Contents read/write and Pull requests read/write permissions
+- `REPOSQUAD_ACCESS_TOKEN`: private API bearer token shared with the Android app
 
-Optional settings: `GEMINI_MODEL` (default `gemini-2.5-flash`) and `REPOSQUAD_DB` (SQLite file path). Use a host with persistent disk; ephemeral storage will lose the SQLite database on redeploy. Do not commit secrets or place them in the Android app.
+Optional settings: `GEMINI_MODEL` (default `gemini-2.5-flash`) and `REPOSQUAD_DB` (SQLite file path). Use persistent storage; ephemeral disks can lose the database on redeploy. Never commit secrets or put Gemini/GitHub keys in the APK.
 
-### Run locally
+## Run backend locally
 
 ```bash
 cd backend
@@ -47,12 +56,13 @@ python -m venv .venv
 pip install -r requirements.txt
 export GEMINI_API_KEY=your_key
 export GITHUB_TOKEN=your_token
+export REPOSQUAD_ACCESS_TOKEN=your_private_token
 uvicorn main:app --host 0.0.0.0 --port 8000
 ```
 
 Endpoints: `GET /health`, `POST /jobs`, `GET /jobs/{id}`, `POST /jobs/{id}/stop`, and `GET /jobs/{id}/logs`.
 
-## Stage 5: automatic pull requests\n\nWhen an agent finishes, it opens a PR from its own branch into the repository's default branch. If it reaches the 80-step cap, it opens a draft PR instead. RepoSquad never merges automatically. Give the server's GitHub token Contents and Pull requests read/write permissions.\n\n## Android build
+## Android build
 
 Requires JDK 17 and Gradle 8.11.1:
 
@@ -60,7 +70,7 @@ Requires JDK 17 and Gradle 8.11.1:
 gradle assembleDebug
 ```
 
-GitHub Actions builds the debug APK on pushes to `main`, pull requests, and manual workflow dispatch.
+GitHub Actions builds the debug APK on pushes to `main`, pull requests, and manual workflow dispatch. It also checks the backend Python syntax.
 
 ## License
 
