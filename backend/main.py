@@ -151,6 +151,9 @@ async def startup():
  for r in rows: schedule(r["id"])
 @app.get("/health")
 def health(): return {"status":"ok","service":"reposquad-api","worker":"enabled"}
+@app.get("/auth/check")
+def auth_check(_=Depends(verify_access)):
+ return {"authorized":True,"service":"reposquad-api"}
 @app.post("/jobs",response_model=Job)
 def start(p:Start,_=Depends(verify_access)):
  if not os.getenv("GEMINI_API_KEY"): raise HTTPException(503,"GEMINI_API_KEY missing on server")
