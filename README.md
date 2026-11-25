@@ -24,6 +24,10 @@ The Android app now remembers the backend URL, repository, task, agent count, an
 
 The API token is deliberately not saved by this feature.
 
+## Stage 7: connection test and token privacy
+
+The app has a **Test connection** button that calls the protected `GET /auth/check` endpoint. It confirms both backend reachability and that the API bearer token is valid. The API token field is masked while typing and is not persisted.
+
 ## Backend deployment
 
 The API requires `REPOSQUAD_ACCESS_TOKEN` for job endpoints. `GET /health` remains public. Enter the same access token in the Android app; it is sent as a Bearer token. Use a long random token and keep it private.
@@ -60,7 +64,7 @@ export REPOSQUAD_ACCESS_TOKEN=your_private_token
 uvicorn main:app --host 0.0.0.0 --port 8000
 ```
 
-Endpoints: `GET /health`, `POST /jobs`, `GET /jobs/{id}`, `POST /jobs/{id}/stop`, and `GET /jobs/{id}/logs`.
+Endpoints: `GET /health`, `GET /auth/check` (requires bearer token), `POST /jobs`, `GET /jobs/{id}`, `POST /jobs/{id}/stop`, and `GET /jobs/{id}/logs`.
 
 ## Android build
 
