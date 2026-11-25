@@ -156,7 +156,7 @@ private fun RepoSquadScreen() {
                     )
                 }
                 item {
-                    Text("Gemini agents: $agents", style = MaterialTheme.typography.titleMedium)
+                    Text("OpenRouter agents: $agents", style = MaterialTheme.typography.titleMedium)
                     Slider(
                         value = agents.toFloat(),
                         onValueChange = { agents = it.toInt().coerceIn(1, 5) },
