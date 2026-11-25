@@ -1,0 +1,10 @@
+.git
+.gradle
+.idea
+**/build
+**/.venv
+**/__pycache__
+backend/.env
+backend/*.db
+backend/*.sqlite*
+data
