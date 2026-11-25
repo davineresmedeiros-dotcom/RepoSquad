@@ -150,7 +150,7 @@ private fun RepoSquadScreen() {
                     OutlinedTextField(
                         value = repo,
                         onValueChange = { repo = it },
-                        label = { Text("GitHub repository (owner/repo)") },
+                        label = { Text("GitHub repository (owner/repo or new:name)") },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true
                     )
@@ -226,7 +226,7 @@ private fun RepoSquadScreen() {
                             }
                         },
                         enabled = !busy && !running && isAllowedBackendUrl(apiUrl) && apiToken.isNotBlank() &&
-                            repo.matches(Regex("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")) && task.isNotBlank(),
+                            repo.matches(Regex("^(?:[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+|new:[A-Za-z0-9_.-]+)$")) && task.isNotBlank(),
                         modifier = Modifier.fillMaxWidth()
                     ) { Text(if (busy) "Connecting..." else "Start squad") }
                     if (!running && !busy && jobId.isNotBlank() && isAllowedBackendUrl(apiUrl) && apiToken.isNotBlank()) {
