@@ -7,8 +7,20 @@ if ! command -v python >/dev/null 2>&1; then
   exit 1
 fi
 
+# Use Termux's native cryptography package instead of building Rust code with pip.
+if command -v pkg >/dev/null 2>&1; then
+  pkg install -y python-cryptography
+else
+  echo "Termux package manager not found; install python-cryptography using your system package manager."
+fi
+
+# Ensure the venv can see Termux's native Python packages.
+if [ -d .venv ] && ! grep -q '^include-system-site-packages = true$' .venv/pyvenv.cfg 2>/dev/null; then
+  echo "Recreating the old RepoSquad virtual environment for Termux compatibility..."
+  rm -rf .venv
+fi
 if [ ! -d .venv ]; then
-  python -m venv .venv
+  python -m venv --system-site-packages .venv
 fi
 . .venv/bin/activate
 python -m pip install --upgrade pip
