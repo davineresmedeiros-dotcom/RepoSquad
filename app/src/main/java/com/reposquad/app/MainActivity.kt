@@ -9,6 +9,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -56,12 +57,14 @@ private suspend fun apiRequest(base: String, token: String, path: String, method
 
 @Composable
 private fun RepoSquadScreen() {
-    var apiUrl by remember { mutableStateOf("") }
+    val context = LocalContext.current
+    val prefs = remember { context.getSharedPreferences("reposquad_state", android.content.Context.MODE_PRIVATE) }
+    var apiUrl by remember { mutableStateOf(prefs.getString("apiUrl", "") ?: "") }
     var apiToken by remember { mutableStateOf("") }
-    var repo by remember { mutableStateOf("") }
-    var task by remember { mutableStateOf("") }
-    var agents by remember { mutableIntStateOf(3) }
-    var jobId by remember { mutableStateOf("") }
+    var repo by remember { mutableStateOf(prefs.getString("repo", "") ?: "") }
+    var task by remember { mutableStateOf(prefs.getString("task", "") ?: "") }
+    var agents by remember { mutableIntStateOf(prefs.getInt("agents", 3).coerceIn(1, 5)) }
+    var jobId by remember { mutableStateOf(prefs.getString("jobId", "") ?: "") }
     var status by remember { mutableStateOf("Pronto para conectar") }
     var logs by remember { mutableStateOf(listOf<String>()) }
     var busy by remember { mutableStateOf(false) }
@@ -173,6 +176,9 @@ private fun RepoSquadScreen() {
                                             .put("task", task.trim()).put("agents", agents)
                                     )
                                     jobId = created.getString("id")
+                                    prefs.edit().putString("apiUrl", apiUrl.trim())
+                                        .putString("repo", repo.trim()).putString("task", task.trim())
+                                        .putInt("agents", agents).putString("jobId", jobId).apply()
                                     status = created.optString("status", "queued")
                                     running = true
                                     append("Job criado: $jobId")
@@ -187,6 +193,26 @@ private fun RepoSquadScreen() {
                             repo.matches(Regex("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")) && task.isNotBlank(),
                         modifier = Modifier.fillMaxWidth()
                     ) { Text(if (busy) "Connecting..." else "Start squad") }
+                    if (!running && !busy && jobId.isNotBlank() && apiUrl.startsWith("https://") && apiToken.isNotBlank()) {
+                        OutlinedButton(
+                            onClick = {
+                                scope.launch {
+                                    busy = true
+                                    try {
+                                        val saved = apiRequest(apiUrl, apiToken, "/jobs/$jobId")
+                                        status = saved.optString("status", "unknown")
+                                        running = status == "queued" || status == "running"
+                                        append("Reconectando ao job $jobId (status: $status)")
+                                        if (running) startPolling(jobId)
+                                    } catch (e: Exception) {
+                                        status = "Falha ao reconectar: ${e.message}"
+                                        append(status)
+                                    } finally { busy = false }
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) { Text("Reconnect to last job") }
+                    }
                     if (running && jobId.isNotBlank()) {
                         OutlinedButton(
                             onClick = {
