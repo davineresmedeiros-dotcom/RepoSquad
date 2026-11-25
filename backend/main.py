@@ -38,7 +38,7 @@ def log(j,a,m):
   c.execute("UPDATE jobs SET updated_at=? WHERE id=?",(now(),j))
 def dto(r): return {k:r[k] for k in ("id","repository","task","agents","status","created_at","updated_at","error")}
 class Start(BaseModel):
- repository:str=Field(pattern=r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+ repository:str=Field(pattern=r"^(?:[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+|new:[A-Za-z0-9_.-]+)$")
  task:str=Field(min_length=1,max_length=12000)
  agents:int=Field(ge=1,le=5)
 class Job(BaseModel):
@@ -239,9 +239,19 @@ def auth_check(_=Depends(verify_access)):
 async def start(p:Start,_=Depends(verify_access)):
  if not os.getenv("GEMINI_API_KEY"): raise HTTPException(503,"GEMINI_API_KEY missing on server")
  if not os.getenv("GITHUB_TOKEN"): raise HTTPException(503,"GITHUB_TOKEN missing on server")
+ repo=p.repository
+ if repo.startswith("new:"):
+  name=repo[4:]
+  if not __import__("re").fullmatch(r"[A-Za-z0-9_.-]{1,100}",name): raise HTTPException(422,"Invalid new repository name")
+  try:
+   async with httpx.AsyncClient(timeout=45) as client:
+    created=await gh(client,"POST","/user/repos",json={"name":name,"private":True,"auto_init":True,"description":"Created by RepoSquad"})
+   repo=created.get("full_name","")
+   if not repo: raise RuntimeError("GitHub did not return the created repository name")
+  except RuntimeError as e: raise HTTPException(400,str(e)[:300])
  j=str(uuid.uuid4()); t=now()
  with conn() as c:
-  c.execute("INSERT INTO jobs(id,repository,task,agents,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",(j,p.repository,p.task,p.agents,"queued",t,t))
+  c.execute("INSERT INTO jobs(id,repository,task,agents,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",(j,repo,p.task,p.agents,"queued",t,t))
   r=c.execute("SELECT * FROM jobs WHERE id=?",(j,)).fetchone()
  schedule(j); return dto(r)
 @app.post("/jobs/{j}/stop",response_model=Job)
