@@ -27,7 +27,7 @@ private fun isAllowedBackendUrl(value: String): Boolean = try {
     val uri = URI(value.trim())
     val scheme = uri.scheme?.lowercase()
     val host = uri.host?.lowercase()
-    scheme == "https" || (scheme == "http" && (host == "localhost" || host == "127.0.0.1"))
+    uri.userInfo == null && host != null && (scheme == "https" || (scheme == "http" && (host == "localhost" || host == "127.0.0.1")))
 } catch (_: Exception) { false }
 
 class MainActivity : ComponentActivity() {
@@ -87,7 +87,7 @@ private fun RepoSquadScreen() {
     fun startPolling(id: String) {
         pollJob?.cancel()
         pollJob = scope.launch {
-            var lastLogId = 0
+            var lastLogId = prefs.getInt("lastLogId_$id", 0)
             while (true) {
                 try {
                     val job = apiRequest(apiUrl, apiToken, "/jobs/$id")
@@ -98,6 +98,7 @@ private fun RepoSquadScreen() {
                     if (rows != null) for (i in 0 until rows.length()) {
                         val row = rows.getJSONObject(i)
                         lastLogId = maxOf(lastLogId, row.optInt("id"))
+                        prefs.edit().putInt("lastLogId_$id", lastLogId).apply()
                         append("[${row.optString("created_at")}] Agent ${row.optInt("agent")}: ${row.optString("message")}")
                     }
                     if (!running) {
@@ -105,10 +106,10 @@ private fun RepoSquadScreen() {
                         break
                     }
                 } catch (e: Exception) {
-                    status = "Erro de conexão: ${e.message ?: "sem detalhes"}"
-                    running = false
+                    status = "Conexão interrompida; tentando novamente: ${e.message ?: "sem detalhes"}"
                     append(status)
-                    break
+                    delay(6000)
+                    continue
                 }
                 delay(4000)
             }
@@ -224,11 +225,11 @@ private fun RepoSquadScreen() {
                                 } finally { busy = false }
                             }
                         },
-                        enabled = !busy && !running && apiUrl.startsWith("https://") && apiToken.isNotBlank() &&
+                        enabled = !busy && !running && isAllowedBackendUrl(apiUrl) && apiToken.isNotBlank() &&
                             repo.matches(Regex("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")) && task.isNotBlank(),
                         modifier = Modifier.fillMaxWidth()
                     ) { Text(if (busy) "Connecting..." else "Start squad") }
-                    if (!running && !busy && jobId.isNotBlank() && apiUrl.startsWith("https://") && apiToken.isNotBlank()) {
+                    if (!running && !busy && jobId.isNotBlank() && isAllowedBackendUrl(apiUrl) && apiToken.isNotBlank()) {
                         OutlinedButton(
                             onClick = {
                                 scope.launch {
