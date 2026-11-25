@@ -66,6 +66,33 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 
 Endpoints: `GET /health`, `GET /auth/check` (requires bearer token), `POST /jobs`, `GET /jobs/{id}`, `POST /jobs/{id}/stop`, and `GET /jobs/{id}/logs`.
 
+## Run locally on Android with Termux (no VPS)
+
+RepoSquad can run on the same Android phone as the app. The backend binds to loopback only, so it is not exposed to your Wi-Fi or the public internet. The app accepts HTTP only for `localhost` and `127.0.0.1`; HTTPS remains required for remote backend URLs.
+
+1. Install Termux from its official F-Droid/GitHub distribution and open it.
+2. Install tools and clone the repo:
+
+   ```bash
+   pkg update
+   pkg install python git termux-tools
+   git clone https://github.com/davineresmedeiros-dotcom/RepoSquad.git
+   cd RepoSquad
+   ```
+
+3. Start the backend (first run creates a Python virtual environment and installs requirements):
+
+   ```bash
+   bash backend/termux-start.sh
+   ```
+
+   Enter your Gemini API key, GitHub token, and a private RepoSquad access token when prompted. They are read silently and exported only to this running shell; do not paste them into GitHub or the app. The backend database is stored in `backend/reposquad.db`.
+
+4. In Termux, use `termux-wake-lock` in another session (or before starting the script) and keep Termux running. Keep the phone charging and set Termux battery usage to Unrestricted in Android settings. Wake Lock helps prevent sleep but Android may still stop processes; rebooting or force-stopping Termux stops the backend.
+5. In RepoSquad, set Backend URL to `http://127.0.0.1:8000`, enter the same private access token, tap **Test connection**, then start a job.
+
+To stop the backend, press Ctrl+C in its Termux session. To release the wake lock, run `termux-wake-unlock`. The API key and GitHub token remain on the phone in the backend process; the Android app receives only the RepoSquad access token.
+
 ## Android build
 
 Requires JDK 17 and Gradle 8.11.1:
