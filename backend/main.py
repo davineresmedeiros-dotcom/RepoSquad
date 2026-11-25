@@ -86,41 +86,6 @@ async def action(c,repo,b,act,args):
  if act=="list_files":
   d=await gh(c,"GET","/repos/"+repo+"/git/trees/"+quote(b,safe=""),params={"recursive":"1"})
   return {"paths":[x["path"] for x in d.get("tree",[]) if x.get("type")=="blob"][:3000]}
- p=str(args.get("path","")).strip()
- if not p or p.startswith("/") or "\\" in p or "\x00" in p or ".." in Path(p).parts: raise RuntimeError("Invalid file path")
- ep="/repos/"+repo+"/contents/"+p
- if act=="read_file":
-  d=await gh(c,"GET",ep,params={"ref":b})
-  return {"path":p,"content":base64.b64decode(d.get("content","").replace("\n","")).decode("utf-8",errors="replace")[:20000]}
- if act=="write_file":
-  text=args.get("content")
-  if not isinstance(text,str) or len(text)>80000: raise RuntimeError("File too large")
-  old=None
-  try: old=await gh(c,"GET",ep,params={"ref":b})
-  except RuntimeError as e:
-   if "404" not in str(e): raise
-  body={"message":str(args.get("message","RepoSquad edit"))[:120],"content":base64.b64encode(text.encode()).decode(),"branch":b}
-  if old: body["sha"]=old["sha"]
-  d=await gh(c,"PUT",ep,json=body)
-  return {"path":p,"commit":d.get("commit",{}).get("sha","")}
- if act=="delete_file":
-  old=await gh(c,"GET",ep,params={"ref":b})
-  d=await gh(c,"DELETE",ep,json={"message":str(args.get("message","RepoSquad remove file"))[:120],"sha":old["sha"],"branch":b})
-  return {"path":p,"deleted":True,"commit":d.get("commit",{}).get("sha","")}
- if act=="rename_file":
-  newp=str(args.get("new_path","")).strip()
-  if not newp or newp.startswith("/") or "\\" in newp or "\x00" in newp or ".." in Path(newp).parts: raise RuntimeError("Invalid destination path")
-  old=await gh(c,"GET",ep,params={"ref":b})
-  content=base64.b64decode(old.get("content","").replace("\n","")).decode("utf-8",errors="replace")
-  dest="/repos/"+repo+"/contents/"+newp
-  try:
-   await gh(c,"GET",dest,params={"ref":b})
-   raise RuntimeError("Destination already exists: "+newp)
-  except RuntimeError as e:
-   if "404" not in str(e): raise
-  put=await gh(c,"PUT",dest,json={"message":str(args.get("message","RepoSquad rename file"))[:120],"content":base64.b64encode(content.encode()).decode(),"branch":b})
-  delete=await gh(c,"DELETE",ep,json={"message":str(args.get("message","RepoSquad rename file"))[:120],"sha":old["sha"],"branch":b})
-  return {"old_path":p,"new_path":newp,"commit":delete.get("commit",{}).get("sha") or put.get("commit",{}).get("sha","")}
  if act=="create_repo":
   name=str(args.get("name","")).strip()
   if not name or not __import__("re").fullmatch(r"[A-Za-z0-9_.-]{1,100}",name): raise RuntimeError("Invalid repository name")
@@ -133,7 +98,7 @@ async def action(c,repo,b,act,args):
   content=args.get("content")
   if not isinstance(content,str) or len(content)>80000: raise RuntimeError("Workflow content too large")
   wp=".github/workflows/"+name
-  wep="/repos/"+repo+"/contents/"+wp
+  wep="/repos/"+repo+"/contents/"+quote(wp,safe="/")
   old=None
   try: old=await gh(c,"GET",wep,params={"ref":b})
   except RuntimeError as e:
@@ -142,6 +107,41 @@ async def action(c,repo,b,act,args):
   if old: body["sha"]=old["sha"]
   d=await gh(c,"PUT",wep,json=body)
   return {"workflow":wp,"commit":d.get("commit",{}).get("sha","")}
+ p=str(args.get("path","")).strip()
+ if not p or p.startswith("/") or "\\" in p or "\x00" in p or ".." in Path(p).parts: raise RuntimeError("Invalid file path")
+ ep="/repos/"+repo+"/contents/"+quote(p,safe="/")
+ if act=="read_file":
+  d=await gh(c,"GET",ep,params={"ref":b})
+  return {"path":p,"content":base64.b64decode(d.get("content","").replace("\n","")).decode("utf-8",errors="replace")[:20000]}
+ if act=="write_file":
+  content=args.get("content")
+  if not isinstance(content,str) or len(content)>80000: raise RuntimeError("File too large")
+  old=None
+  try: old=await gh(c,"GET",ep,params={"ref":b})
+  except RuntimeError as e:
+   if "404" not in str(e): raise
+  body={"message":str(args.get("message","RepoSquad edit"))[:120],"content":base64.b64encode(content.encode()).decode(),"branch":b}
+  if old: body["sha"]=old["sha"]
+  d=await gh(c,"PUT",ep,json=body)
+  return {"path":p,"commit":d.get("commit",{}).get("sha","")}
+ if act=="delete_file":
+  old=await gh(c,"GET",ep,params={"ref":b})
+  d=await gh(c,"DELETE",ep,json={"message":str(args.get("message","RepoSquad remove file"))[:120],"sha":old["sha"],"branch":b})
+  return {"path":p,"deleted":True,"commit":d.get("commit",{}).get("sha","")}
+ if act=="rename_file":
+  newp=str(args.get("new_path","")).strip()
+  if not newp or newp.startswith("/") or "\\" in newp or "\x00" in newp or ".." in Path(newp).parts: raise RuntimeError("Invalid destination path")
+  old=await gh(c,"GET",ep,params={"ref":b})
+  content=base64.b64decode(old.get("content","").replace("\n","")).decode("utf-8",errors="replace")
+  dest="/repos/"+repo+"/contents/"+quote(newp,safe="/")
+  try:
+   await gh(c,"GET",dest,params={"ref":b})
+   raise RuntimeError("Destination already exists: "+newp)
+  except RuntimeError as e:
+   if "404" not in str(e): raise
+  put=await gh(c,"PUT",dest,json={"message":str(args.get("message","RepoSquad rename file"))[:120],"content":base64.b64encode(content.encode()).decode(),"branch":b})
+  delete=await gh(c,"DELETE",ep,json={"message":str(args.get("message","RepoSquad rename file"))[:120],"sha":old["sha"],"branch":b})
+  return {"old_path":p,"new_path":newp,"commit":delete.get("commit",{}).get("sha") or put.get("commit",{}).get("sha","")}
  raise RuntimeError("Unknown action")
 RULES="""You are an autonomous coding agent working on the user's GitHub project. Make concrete progress.
 Return exactly one JSON object, no markdown. Available actions:
