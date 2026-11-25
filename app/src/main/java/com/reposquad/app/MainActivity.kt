@@ -5,11 +5,19 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import org.json.JSONObject
+import java.net.HttpURLConnection
+import java.net.URL
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -18,12 +26,79 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+private suspend fun apiRequest(base: String, path: String, method: String = "GET", body: JSONObject? = null): JSONObject =
+    withContext(Dispatchers.IO) {
+        val connection = (URL(base.trimEnd('/') + path).openConnection() as HttpURLConnection).apply {
+            requestMethod = method
+            connectTimeout = 15000
+            readTimeout = 20000
+            setRequestProperty("Accept", "application/json")
+            if (body != null) {
+                doOutput = true
+                setRequestProperty("Content-Type", "application/json; charset=utf-8")
+            }
+        }
+        try {
+            if (body != null) connection.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
+            val code = connection.responseCode
+            val stream = if (code in 200..299) connection.inputStream else connection.errorStream
+            val text = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
+            if (code !in 200..299) {
+                val message = try { JSONObject(text).optString("detail", text) } catch (_: Exception) { text }
+                throw IllegalStateException("HTTP $code: $message")
+            }
+            JSONObject(text)
+        } finally {
+            connection.disconnect()
+        }
+    }
+
 @Composable
 private fun RepoSquadScreen() {
+    var apiUrl by remember { mutableStateOf("") }
     var repo by remember { mutableStateOf("") }
     var task by remember { mutableStateOf("") }
     var agents by remember { mutableIntStateOf(3) }
+    var jobId by remember { mutableStateOf("") }
+    var status by remember { mutableStateOf("Pronto para conectar") }
+    var logs by remember { mutableStateOf(listOf<String>()) }
+    var busy by remember { mutableStateOf(false) }
     var running by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    var pollJob by remember { mutableStateOf<Job?>(null) }
+
+    fun append(line: String) { logs = (logs + line).takeLast(250) }
+
+    fun startPolling(id: String) {
+        pollJob?.cancel()
+        pollJob = scope.launch {
+            var lastLogId = 0
+            while (true) {
+                try {
+                    val job = apiRequest(apiUrl, "/jobs/$id")
+                    status = job.optString("status", "unknown")
+                    running = status == "queued" || status == "running"
+                    val data = apiRequest(apiUrl, "/jobs/$id/logs?after=$lastLogId&limit=100")
+                    val rows = data.optJSONArray("logs")
+                    if (rows != null) for (i in 0 until rows.length()) {
+                        val row = rows.getJSONObject(i)
+                        lastLogId = maxOf(lastLogId, row.optInt("id"))
+                        append("[${row.optString("created_at")}] Agent ${row.optInt("agent")}: ${row.optString("message")}")
+                    }
+                    if (!running) {
+                        append("Job terminou com status: $status")
+                        break
+                    }
+                } catch (e: Exception) {
+                    status = "Erro de conexão: ${e.message ?: "sem detalhes"}"
+                    running = false
+                    append(status)
+                    break
+                }
+                delay(4000)
+            }
+        }
+    }
 
     MaterialTheme {
         Scaffold { padding ->
@@ -35,6 +110,15 @@ private fun RepoSquadScreen() {
                 item {
                     Text("RepoSquad", style = MaterialTheme.typography.headlineLarge)
                     Text("Your AI coding squad", style = MaterialTheme.typography.bodyLarge)
+                }
+                item {
+                    OutlinedTextField(
+                        value = apiUrl,
+                        onValueChange = { apiUrl = it.trim() },
+                        label = { Text("Backend URL (https://...)") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true
+                    )
                 }
                 item {
                     OutlinedTextField(
@@ -68,17 +152,59 @@ private fun RepoSquadScreen() {
                 }
                 item {
                     Button(
-                        onClick = { running = !running },
-                        enabled = repo.contains("/") && task.isNotBlank(),
+                        onClick = {
+                            scope.launch {
+                                busy = true
+                                try {
+                                    val created = apiRequest(
+                                        apiUrl, "/jobs", "POST",
+                                        JSONObject().put("repository", repo.trim())
+                                            .put("task", task.trim()).put("agents", agents)
+                                    )
+                                    jobId = created.getString("id")
+                                    status = created.optString("status", "queued")
+                                    running = true
+                                    append("Job criado: $jobId")
+                                    startPolling(jobId)
+                                } catch (e: Exception) {
+                                    status = "Falha ao iniciar: ${e.message}"
+                                    append(status)
+                                } finally { busy = false }
+                            }
+                        },
+                        enabled = !busy && !running && apiUrl.startsWith("https://") &&
+                            repo.matches(Regex("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")) && task.isNotBlank(),
                         modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text(if (running) "Stop squad" else "Start squad")
+                    ) { Text(if (busy) "Connecting..." else "Start squad") }
+                    if (running && jobId.isNotBlank()) {
+                        OutlinedButton(
+                            onClick = {
+                                scope.launch {
+                                    busy = true
+                                    try {
+                                        apiRequest(apiUrl, "/jobs/$jobId/stop", "POST", JSONObject())
+                                        status = "stopped"
+                                        running = false
+                                        pollJob?.cancel()
+                                        append("Stop solicitado.")
+                                    } catch (e: Exception) {
+                                        status = "Falha ao parar: ${e.message}"
+                                        append(status)
+                                    } finally { busy = false }
+                                }
+                            },
+                            enabled = !busy,
+                            modifier = Modifier.fillMaxWidth()
+                        ) { Text("Stop squad") }
                     }
-                    Text(
-                        if (running) "Demo state only — backend connection is next."
-                        else "Choose a repository and task to start.",
-                        style = MaterialTheme.typography.bodySmall
-                    )
+                    Text("Status: $status", style = MaterialTheme.typography.bodySmall)
+                    if (jobId.isNotBlank()) Text("Job: $jobId", style = MaterialTheme.typography.bodySmall)
+                    Text("Use a hosted HTTPS backend. API keys stay on the server.", style = MaterialTheme.typography.bodySmall)
+                }
+                item { Text("Activity logs", style = MaterialTheme.typography.titleMedium) }
+                items(logs) { line ->
+                    Text(line, style = MaterialTheme.typography.bodySmall)
+                    HorizontalDivider()
                 }
             }
         }
