@@ -58,7 +58,7 @@ python -m pip install --no-deps "./$WHEEL_FILE"
 rm -f "$WHEEL_FILE"
 python -c 'import pydantic_core; print("pydantic-core:", pydantic_core.__version__)'
 
-printf 'pydantic==2.14.0\\n' > termux-constraints.txt
+printf 'pydantic==2.14.0\n' > termux-constraints.txt
 python -m pip install -c termux-constraints.txt -r requirements.txt
 
 read -r -s -p "OpenRouter API key: " OPENROUTER_API_KEY; echo
