@@ -100,7 +100,7 @@ RepoSquad can run on the same Android phone as the app. The backend binds to loo
    cd RepoSquad
    ```
 
-3. Start the backend (first run creates a Python virtual environment and installs requirements):
+3. Start the backend (first run installs Termux's native `python-cryptography`, creates a virtual environment with system packages visible, and installs requirements; the script recreates an old incompatible `.venv` automatically):
 
    ```bash
    bash backend/termux-start.sh
