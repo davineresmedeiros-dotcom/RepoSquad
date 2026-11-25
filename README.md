@@ -5,13 +5,13 @@ AI coding agents working on GitHub repositories, controlled from an Android app.
 ## Project layout
 
 - `app/`: Android Compose control panel
-- `backend/`: FastAPI service and Gemini coding agents
+- `backend/`: FastAPI service and OpenRouter-powered coding agents
 - `.github/workflows/android-build.yml`: backend syntax check and Android debug APK build
 
 ## What it does
 
 1. The Android app sends a coding task to the hosted backend.
-2. The backend starts 1–5 Gemini agents, each on a separate branch.
+2. The backend starts 1–5 OpenRouter-powered agents, each on a separate branch.
 3. Agents inspect, create, and edit repository files and commit their changes.
 4. When an agent finishes, it opens a pull request. If it reaches the 80-step cap, it opens a draft PR.
 5. RepoSquad does **not** merge pull requests automatically. Review and test changes before merging.
@@ -45,18 +45,18 @@ The GitHub token must have repository Contents read/write and Pull requests read
 
 - The Android app permits HTTP only for `localhost`/`127.0.0.1`, and Start/Reconnect now use that same validation instead of incorrectly requiring HTTPS.
 - Log polling retries after temporary connection failures and saves its last log ID to avoid replaying old lines after reconnect.
-- Backend job creation now schedules workers on FastAPI's event loop; SQLite connections are closed reliably; branch/tree refs are URL-encoded; Gemini JSON responses tolerate a surrounding text/code fence; and agent errors are reflected in the job status rather than reported as successful completion.
-- Default model is `gemini-3.8-flash`. Google lists it with free-tier input/output access, subject to the account/model rate limits. The API key is passed as a raw key through the SDK; keys beginning `AQ` do not need a custom prefix or Bearer header.
+- Backend job creation now schedules workers on FastAPI's event loop; SQLite connections are closed reliably; branch/tree refs are URL-encoded; OpenRouter JSON responses tolerate a surrounding text/code fence; and agent errors are reflected in the job status rather than reported as successful completion.
+- Default model is `openrouter/free`. OpenRouter's free model router selects an available free model; availability and rate limits vary. The API key is passed as a raw key through the SDK; keys beginning `AQ` do not need a custom prefix or Bearer header.
 
 ## Backend deployment
 
-The API requires `REPOSQUAD_ACCESS_TOKEN` for job endpoints. `GET /health` remains public. Enter the same access token in the Android app; it is sent as a Bearer token. Use a long random token and keep it private.
+The API requires `REPOSQUAD_ACCESS_TOKEN` for job endpoints. API account creation and use must follow OpenRouter's age and account terms; a parent or guardian may need to administer the account. `GET /health` remains public. Enter the same access token in the Android app; it is sent as a Bearer token. Use a long random token and keep it private.
 
 ### Docker on a persistent VPS
 
 1. Install Docker Engine and the Docker Compose plugin.
 2. Clone this repository and enter its directory.
-3. Copy `backend/.env.example` to `backend/.env`; set `GEMINI_API_KEY`, `GITHUB_TOKEN`, and `REPOSQUAD_ACCESS_TOKEN`. Set `REPOSQUAD_DB=/data/reposquad.db`.
+3. Copy `backend/.env.example` to `backend/.env`; set `OPENROUTER_API_KEY`, `GITHUB_TOKEN`, and `REPOSQUAD_ACCESS_TOKEN`. Set `REPOSQUAD_DB=/data/reposquad.db`.
 4. Run `docker compose up -d --build`.
 5. Put a reverse proxy with TLS (for example Caddy) in front of port 8000. Expose only HTTPS publicly; do not expose the backend port directly.
 6. Set the app's Backend URL to the HTTPS URL and enter the same API access token.
@@ -65,11 +65,11 @@ Compose persists SQLite at `./data`. Keep the VPS running and configure backups.
 
 ## Required server secrets
 
-- `GEMINI_API_KEY`: Gemini API key
+- `OPENROUTER_API_KEY`: OpenRouter API key
 - `GITHUB_TOKEN`: GitHub token with repository Contents read/write and Pull requests read/write permissions
 - `REPOSQUAD_ACCESS_TOKEN`: private API bearer token shared with the Android app
 
-Optional settings: `GEMINI_MODEL` (default `gemini-3.8-flash`, listed with free-tier access by Google) and `REPOSQUAD_DB` (SQLite file path). The free tier has usage/rate limits and is not unlimited 24/7. Use persistent storage; ephemeral disks can lose the database on redeploy. Never commit secrets or put Gemini/GitHub keys in the APK.
+Optional settings: `OPENROUTER_MODEL` (default `openrouter/free`, which routes to an available free model) and `REPOSQUAD_DB` (SQLite file path). The free tier has usage/rate limits and is not unlimited 24/7. Use persistent storage; ephemeral disks can lose the database on redeploy. Never commit secrets or put OpenRouter/GitHub keys in the APK.
 
 ## Run backend locally
 
@@ -78,7 +78,7 @@ cd backend
 python -m venv .venv
 # activate the virtual environment
 pip install -r requirements.txt
-export GEMINI_API_KEY=your_key
+export OPENROUTER_API_KEY=your_key
 export GITHUB_TOKEN=your_token
 export REPOSQUAD_ACCESS_TOKEN=your_private_token
 uvicorn main:app --host 0.0.0.0 --port 8000
@@ -106,7 +106,7 @@ RepoSquad can run on the same Android phone as the app. The backend binds to loo
    bash backend/termux-start.sh
    ```
 
-   Enter your full Gemini API key exactly as issued (including an `AQ...` prefix if that is how your key begins), GitHub token, and a private RepoSquad access token when prompted. The Gemini key is passed directly to the Google Gen AI SDK as `GEMINI_API_KEY`; do not add `Bearer ` or paste it into GitHub/the Android app. Secrets are read silently and exported only to this running shell. The backend database is stored in `backend/reposquad.db`.
+   Enter your full OpenRouter API key exactly as issued (including an `AQ...` prefix if that is how your key begins), GitHub token, and a private RepoSquad access token when prompted. The OpenRouter key is passed directly to the OpenRouter chat completions API as `OPENROUTER_API_KEY`; do not add `Bearer ` or paste it into GitHub/the Android app. Secrets are read silently and exported only to this running shell. The backend database is stored in `backend/reposquad.db`.
 
 4. In Termux, use `termux-wake-lock` in another session (or before starting the script) and keep Termux running. Keep the phone charging and set Termux battery usage to Unrestricted in Android settings. Wake Lock helps prevent sleep but Android may still stop processes; rebooting or force-stopping Termux stops the backend.
 5. In RepoSquad, set Backend URL to `http://127.0.0.1:8000`, enter the same private access token, tap **Test connection**, then start a job.
