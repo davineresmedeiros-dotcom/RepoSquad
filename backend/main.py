@@ -1,6 +1,8 @@
 import asyncio,base64,json,os,sqlite3,uuid,secrets
+from contextlib import contextmanager
 from datetime import datetime,timezone
 from pathlib import Path
+from urllib.parse import quote
 import httpx
 from fastapi import FastAPI,HTTPException,Header,Depends
 from pydantic import BaseModel,Field
@@ -8,13 +10,22 @@ from google import genai
 from google.genai import types
 
 DB=Path(os.getenv("REPOSQUAD_DB",str(Path(__file__).parent/"reposquad.db")))
-MODEL=os.getenv("GEMINI_MODEL","gemini-2.5-flash")
+MODEL=os.getenv("GEMINI_MODEL","gemini-3.8-flash")
 API="https://api.github.com"
 app=FastAPI(title="RepoSquad API",version="0.2.0")
 events={}; tasks={}
 def now(): return datetime.now(timezone.utc).isoformat()
+@contextmanager
 def conn():
- c=sqlite3.connect(DB,timeout=30); c.row_factory=sqlite3.Row; return c
+ c=sqlite3.connect(DB,timeout=30); c.row_factory=sqlite3.Row
+ try:
+  yield c
+  c.commit()
+ except Exception:
+  c.rollback()
+  raise
+ finally:
+  c.close()
 def init():
  DB.parent.mkdir(parents=True,exist_ok=True)
  with conn() as c:
@@ -48,7 +59,7 @@ async def gh(c,m,p,**kw):
  return r.json() if r.content else {}
 async def branch(c,repo,b):
  info=await gh(c,"GET","/repos/"+repo)
- ref=await gh(c,"GET","/repos/"+repo+"/git/ref/heads/"+info["default_branch"])
+ ref=await gh(c,"GET","/repos/"+repo+"/git/ref/heads/"+quote(info["default_branch"],safe=""))
  try: await gh(c,"POST","/repos/"+repo+"/git/refs",json={"ref":"refs/heads/"+b,"sha":ref["object"]["sha"]})
  except RuntimeError as e:
   if "422" not in str(e): raise
@@ -73,10 +84,10 @@ async def open_pr(c,repo,b,job_id,agent,summary,draft=False):
 
 async def action(c,repo,b,act,args):
  if act=="list_files":
-  d=await gh(c,"GET","/repos/"+repo+"/git/trees/"+b,params={"recursive":"1"})
+  d=await gh(c,"GET","/repos/"+repo+"/git/trees/"+quote(b,safe=""),params={"recursive":"1"})
   return {"paths":[x["path"] for x in d.get("tree",[]) if x.get("type")=="blob"][:3000]}
  p=str(args.get("path","")).strip()
- if not p or p.startswith("/") or ".." in Path(p).parts: raise RuntimeError("Invalid file path")
+ if not p or p.startswith("/") or "\\" in p or "\x00" in p or ".." in Path(p).parts: raise RuntimeError("Invalid file path")
  ep="/repos/"+repo+"/contents/"+p
  if act=="read_file":
   d=await gh(c,"GET",ep,params={"ref":b})
@@ -103,7 +114,12 @@ Inspect before editing. Use relative paths. Do not claim tests ran unless actual
 async def choose(model,repo,task,b,h):
  prompt="Repository: "+repo+"\nBranch: "+b+"\nTask: "+task+"\nRecent results: "+json.dumps(h[-5:],ensure_ascii=False)+"\nChoose next action."
  r=await asyncio.to_thread(model.models.generate_content,model=MODEL,contents=prompt,config=types.GenerateContentConfig(system_instruction=RULES,temperature=0.2))
- d=json.loads((r.text or "").strip())
+ text=(r.text or "").strip()
+ try: d=json.loads(text)
+ except json.JSONDecodeError:
+  start=text.find("{")
+  if start<0: raise RuntimeError("Gemini did not return a JSON action")
+  d,_=json.JSONDecoder().raw_decode(text[start:])
  if d.get("action") not in ("list_files","read_file","write_file","finish") or not isinstance(d.get("args",{}),dict): raise RuntimeError("Invalid Gemini action")
  return d
 async def agent(j,repo,task,n,event):
@@ -113,18 +129,21 @@ async def agent(j,repo,task,n,event):
    await branch(c,repo,b); log(j,n,"Started branch "+b)
    model=genai.Client(api_key=os.environ["GEMINI_API_KEY"])
    for step in range(1,81):
-    if event.is_set(): return
+    if event.is_set(): return "stopped"
     d=await choose(model,repo,task,b,history); act,args=d["action"],d.get("args",{})
     if act=="finish":
      summary=str(args.get("summary","completed task"))[:700]
      log(j,n,"Finished: "+summary)
      await open_pr(c,repo,b,j,n,summary,draft=False)
-     return
+     return "completed"
     result=await action(c,repo,b,act,args); brief=json.dumps(result,ensure_ascii=False)[:3500]
     history.append({"action":act,"result":brief}); log(j,n,"Step "+str(step)+" "+act+": "+brief)
    log(j,n,"Safety cap reached: 80 model steps; opening a draft PR for review.")
    await open_pr(c,repo,b,j,n,"work in progress (step cap reached)",draft=True)
- except Exception as e: log(j,n,"ERROR: "+str(e)[:900])
+   return "draft"
+ except Exception as e:
+  log(j,n,"ERROR: "+str(e)[:900])
+  return "failed"
 async def worker(j):
  event=events.setdefault(j,asyncio.Event())
  with conn() as c:
@@ -133,11 +152,17 @@ async def worker(j):
   c.execute("UPDATE jobs SET status='running',updated_at=? WHERE id=?",(now(),j))
  log(j,0,"Running "+str(r["agents"])+" agents.")
  try:
-  await asyncio.gather(*(agent(j,r["repository"],r["task"],n,event) for n in range(1,r["agents"]+1)))
+  results=await asyncio.gather(*(agent(j,r["repository"],r["task"],n,event) for n in range(1,r["agents"]+1)))
   with conn() as c:
    s=c.execute("SELECT status FROM jobs WHERE id=?",(j,)).fetchone()
-   if s and s["status"]!="stopped": c.execute("UPDATE jobs SET status='completed',updated_at=? WHERE id=?",(now(),j))
-  if not event.is_set(): log(j,0,"All agents finished.")
+   if s and s["status"]!="stopped":
+    failed=any(x=="failed" for x in results)
+    status="failed" if failed else ("stopped" if event.is_set() else "completed")
+    error="One or more agents failed. Check the activity logs." if failed else None
+    c.execute("UPDATE jobs SET status=?,error=?,updated_at=? WHERE id=?",(status,error,now(),j))
+  if not event.is_set():
+   if any(x=="failed" for x in results): log(j,0,"Job finished with agent errors.")
+   else: log(j,0,"All agents finished.")
  except Exception as e:
   with conn() as c: c.execute("UPDATE jobs SET status='failed',error=?,updated_at=? WHERE id=?",(str(e)[:900],now(),j))
  finally: events.pop(j,None); tasks.pop(j,None)
@@ -155,7 +180,7 @@ def health(): return {"status":"ok","service":"reposquad-api","worker":"enabled"
 def auth_check(_=Depends(verify_access)):
  return {"authorized":True,"service":"reposquad-api"}
 @app.post("/jobs",response_model=Job)
-def start(p:Start,_=Depends(verify_access)):
+async def start(p:Start,_=Depends(verify_access)):
  if not os.getenv("GEMINI_API_KEY"): raise HTTPException(503,"GEMINI_API_KEY missing on server")
  if not os.getenv("GITHUB_TOKEN"): raise HTTPException(503,"GITHUB_TOKEN missing on server")
  j=str(uuid.uuid4()); t=now()
@@ -164,7 +189,7 @@ def start(p:Start,_=Depends(verify_access)):
   r=c.execute("SELECT * FROM jobs WHERE id=?",(j,)).fetchone()
  schedule(j); return dto(r)
 @app.post("/jobs/{j}/stop",response_model=Job)
-def stop(j:str,_=Depends(verify_access)):
+async def stop(j:str,_=Depends(verify_access)):
  with conn() as c:
   r=c.execute("SELECT * FROM jobs WHERE id=?",(j,)).fetchone()
   if not r: raise HTTPException(404,"Job not found")
