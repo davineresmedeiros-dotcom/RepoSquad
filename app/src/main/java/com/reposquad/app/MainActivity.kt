@@ -20,6 +20,15 @@ import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
+import java.net.URI
+
+
+private fun isAllowedBackendUrl(value: String): Boolean = try {
+    val uri = URI(value.trim())
+    val scheme = uri.scheme?.lowercase()
+    val host = uri.host?.lowercase()
+    scheme == "https" || (scheme == "http" && (host == "localhost" || host == "127.0.0.1"))
+} catch (_: Exception) { false }
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -121,7 +130,7 @@ private fun RepoSquadScreen() {
                     OutlinedTextField(
                         value = apiUrl,
                         onValueChange = { apiUrl = it.trim() },
-                        label = { Text("Backend URL (https://...)") },
+                        label = { Text("Backend URL (HTTPS or localhost)") },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true
                     )
@@ -186,7 +195,7 @@ private fun RepoSquadScreen() {
                                 } finally { busy = false }
                             }
                         },
-                        enabled = !busy && apiUrl.startsWith("https://") && apiToken.isNotBlank(),
+                        enabled = !busy && isAllowedBackendUrl(apiUrl) && apiToken.isNotBlank(),
                         modifier = Modifier.fillMaxWidth()
                     ) { Text(if (busy) "Testing..." else "Test connection") }
                 }
@@ -262,7 +271,7 @@ private fun RepoSquadScreen() {
                     }
                     Text("Status: $status", style = MaterialTheme.typography.bodySmall)
                     if (jobId.isNotBlank()) Text("Job: $jobId", style = MaterialTheme.typography.bodySmall)
-                    Text("Use a hosted HTTPS backend. API keys stay on the server.", style = MaterialTheme.typography.bodySmall)
+                    Text("Use HTTPS, or HTTP on localhost only. API keys stay on the server.", style = MaterialTheme.typography.bodySmall)
                 }
                 item { Text("Activity logs", style = MaterialTheme.typography.titleMedium) }
                 items(logs) { line ->
